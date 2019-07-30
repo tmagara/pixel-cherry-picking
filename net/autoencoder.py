@@ -77,13 +77,13 @@ class Model1(chainer.Chain):
         y = self.decoder(z)
         y = chainer.functions.sigmoid(y)
         N, _, H, W = y.shape
-        y = chainer.functions.reshape(y, (N, self.out_candidates, self.out_channels, H, W))
+        y = chainer.functions.reshape(y, (N, self.out_channels, self.out_candidates, H, W))
         return y, z_mu, z_ln_var
 
     def __call__(self, x, labels):
         y, z_mu, z_ln_var = self.process(x, labels, True)
 
-        mse, log_mse = self.calculate_loss(x[:, None], y)
+        mse, log_mse = self.calculate_loss(x[:, :, None], y)
         mse = chainer.functions.mean(mse)
         log_mse = chainer.functions.mean(log_mse)
 
@@ -103,8 +103,8 @@ class Model1(chainer.Chain):
 
     def calculate_loss(self, x, y):
         mse = chainer.functions.square(x - y)
-        mse = chainer.functions.mean(mse, (2,), keepdims=True)
-        mse = chainer.functions.min(mse, (1,), keepdims=True)
+        mse = chainer.functions.mean(mse, (1,), keepdims=True)
+        mse = chainer.functions.min(mse, (2,), keepdims=True)
         mse = chainer.functions.mean(mse, (3, 4), keepdims=True)
         log_mse = 0.5 * chainer.functions.log(mse)
         return mse, log_mse
@@ -125,41 +125,42 @@ class Model1(chainer.Chain):
 
     def sort_y(self, y):
         xp = self.xp
-        N, M, C, H, W = y.shape
+        N, C, M, H, W = y.shape
 
-        rgby = xp.array([0.2126, 0.7152, 0.0722], y.dtype)[None, None, :, None, None]
+        rgby = xp.array([0.2126, 0.7152, 0.0722], y.dtype)[None, :, None, None, None]
         yy = xp.power(y.data, 2.2)
-        yy = xp.sum(rgby * yy, (0, 2,), keepdims=True)
+        yy = xp.sum(rgby * yy, (0, 1,), keepdims=True)
 
-        indices = xp.argsort(yy, 1)
+        indices = xp.argsort(yy, 2)
         onehot = xp.eye(M)[indices]
-        onehot = xp.transpose(onehot, (0, 5, 2, 3, 4, 1))
+        onehot = xp.transpose(onehot, (0, 1, 2, 5, 3, 4))
 
-        sorted = chainer.functions.sum(y[:, :, :, :, :, None] * onehot, (1,))
-        sorted = chainer.functions.transpose(sorted, (0, 4, 1, 2, 3))
+        sorted = chainer.functions.sum(y[:, :, None] * onehot, (3,))
         return sorted
 
     def _dump(self, x, y):
-        _, best_mask = self.cherry_pick(x[:, None], y.data)
+        x = x[:, :, None]
+        _, best_mask = self.cherry_pick(x, y.data)
         y, best_mask = chainer.functions.broadcast(y, best_mask)
-        y_best = chainer.functions.sum(y * best_mask, (1,))
+        y_best = chainer.functions.sum(y * best_mask, (2,))
+        y_best = y_best[:, :, None]
 
-        if y.shape[1] > 4:
-            even = chainer.functions.concat((x[:, None], y_best[:, None], y))
-            odd = chainer.functions.concat((x[:, None] * 0, y_best[:, None] * 0, best_mask))
+        if y.shape[2] > 4:
+            even = chainer.functions.concat((x, y_best, y), 2)
+            odd = chainer.functions.concat((x * 0, y_best * 0, best_mask), 2)
             output = chainer.functions.stack((even, odd), 1)
             output = chainer.functions.reshape(output, (-1, ) + output.shape[2:])
         else:
-            output = chainer.functions.concat((x[:, None], y_best[:, None], y,  best_mask))
+            output = chainer.functions.concat((x, y_best, y,  best_mask), 2)
 
         return output
 
     def cherry_pick(self, x, y):
         xp = self.xp
         pixel_loss = (y - x) ** 2
-        pixel_loss = xp.sum(pixel_loss, (2,), keepdims=True)
-        min_indices = xp.argmin(pixel_loss, 1)
-        mask = xp.eye(y.shape[1])[min_indices]
-        mask = xp.transpose(mask, (0, 4, 1, 2, 3))
+        pixel_loss = xp.sum(pixel_loss, (1,), keepdims=True)
+        min_indices = xp.argmin(pixel_loss, 2)
+        mask = xp.eye(y.shape[2])[min_indices]
+        mask = xp.transpose(mask, (0, 1, 4, 2, 3))
         mask = mask.astype(x.dtype)
         return min_indices, mask

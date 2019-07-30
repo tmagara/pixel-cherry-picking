@@ -19,8 +19,8 @@ class Visualize(chainer.training.Extension):
         for (path, images) in images_list:
             images = images.data[0:self.samples]
             images = xp.clip(images, 0.0, 1.0)
-            rows, columns, c, h, w = images.shape
-            images = xp.transpose(images, (0, 3, 1, 4, 2))
+            rows, c, columns, h, w = images.shape
+            images = xp.transpose(images, (0, 3, 2, 4, 1))
             images = xp.reshape(images, (rows * h, columns * w, c))
             images = chainer.backends.cuda.to_cpu(images)
             path_object = pathlib.Path(trainer.out) / path.format(epoch=trainer.updater.epoch)
